@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>3D 地球戰機飛行模擬器 (1:1 Earth Scale • F-16C)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #030712; touch-action: none; font-family: monospace; }
+    #canvas-container { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+    #hud { position: absolute; inset: 0; pointer-events: none; color: #34d399; font-size: 12px; }
+    .hud-box { background: rgba(0,0,0,0.65); border: 1px solid rgba(52,211,153,0.45); border-radius: 6px; padding: 6px 10px; }
+    #compass-bar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); min-width: 240px; height: 32px; border-bottom: 2px solid #34d399; display: flex; align-items: center; justify-content: center; gap: 10px; }
+    #airspeed-tape { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); text-align: left; }
+    #altitude-tape { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); text-align: right; }
+    #crosshair { position: absolute; top: 50%; left: 50%; width: 16px; height: 16px; margin-left: -8px; margin-top: -8px; border: 2px solid #34d399; border-radius: 50%; }
+    #stall-warning { display: none; position: absolute; top: 68px; left: 50%; transform: translateX(-50%); background: rgba(220,38,38,0.92); color: #fff; font-weight: bold; padding: 6px 16px; border-radius: 4px; border: 2px solid #f87171; animation: blink 0.5s infinite; }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+    #touch-ui { position: absolute; inset: 0; pointer-events: none; }
+    #joystick-base { position: absolute; bottom: 20px; left: 20px; width: 130px; height: 130px; border-radius: 50%; border: 2px solid rgba(52,211,153,0.5); background: rgba(0,0,0,0.55); pointer-events: auto; }
+    #joystick-knob { position: absolute; top: 50%; left: 50%; width: 46px; height: 46px; margin-left: -23px; margin-top: -23px; border-radius: 50%; background: rgba(52,211,153,0.65); border: 2px solid #fff; }
+    #mfc-bar { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; pointer-events: auto; background: rgba(0,0,0,0.72); border: 1px solid rgba(52,211,153,0.4); border-radius: 8px; padding: 5px 8px; }
+    .mfc-btn { padding: 5px 8px; border-radius: 4px; border: 1px solid rgba(52,211,153,0.45); background: #0f172a; color: #6ee7b7; font-size: 11px; font-weight: bold; cursor: pointer; }
+    .mfc-btn:active, .mfc-btn.active { background: #10b981; color: #000; }
+    #throttle-container { position: absolute; bottom: 20px; right: 20px; width: 48px; height: 180px; border-radius: 8px; border: 2px solid rgba(52,211,153,0.5); background: rgba(0,0,0,0.65); pointer-events: auto; display: flex; flex-direction: column; justify-content: flex-end; padding: 4px; }
+    #throttle-bar { width: 100%; height: 65%; background: #34d399; border-radius: 4px; transition: height 0.05s; }
+    #action-buttons { position: absolute; bottom: 20px; right: 78px; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
+    .btn-action { width: 54px; height: 54px; border-radius: 50%; border: 2px solid; background: rgba(0,0,0,0.7); color: #fff; font-weight: bold; font-size: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; }
+    .btn-fire { border-color: #ef4444; color: #fca5a5; }
+    .btn-cam { border-color: #38bdf8; color: #bae6fd; }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  <div id="hud">
+    <div id="compass-bar" class="hud-box">
+      <span id="heading-val">HDG: 000°</span>
+      <span style="color:#7dd3fc;font-size:10px;">EARTH 1:1 (6,371km) • 拖曳轉動視角</span>
+    </div>
+    <div id="airspeed-tape" class="hud-box">
+      <div>AIRSPEED</div>
+      <div id="speed-val" style="font-size: 20px; font-weight: bold; color: #fff;">0</div>
+      <div>KNOTS</div>
+      <div id="mach-val" style="color: #6ee7b7; margin-top: 4px;">M 0.00</div>
+    </div>
+    <div id="altitude-tape" class="hud-box">
+      <div>ALTITUDE</div>
+      <div id="alt-val" style="font-size: 20px; font-weight: bold; color: #fff;">0</div>
+      <div>FEET</div>
+      <div id="alt-m-val" style="color: #6ee7b7; margin-top: 4px;">0 M</div>
+    </div>
+    <div id="crosshair"></div>
+    <div id="stall-warning">⚠️ STALL WARNING ! 失速警告 !</div>
+  </div>
+
+  <div id="touch-ui">
+    <div id="joystick-base"><div id="joystick-knob"></div></div>
+    <div id="mfc-bar">
+      <button class="mfc-btn" id="btn-yaw-l">◀ 左舵</button>
+      <button class="mfc-btn" id="btn-yaw-r">右舵 ▶</button>
+      <button class="mfc-btn" id="btn-gear">起落架</button>
+      <button class="mfc-btn" id="btn-brake">輪煞/減速</button>
+      <button class="mfc-btn" id="btn-reset-cam">重設鏡頭</button>
+    </div>
+    <div id="action-buttons">
+      <button class="btn-action btn-cam" id="btn-camera">CAM<br>視角</button>
+      <button class="btn-action btn-fire" id="btn-fire">AB<br>全推</button>
+    </div>
+    <div id="throttle-container"><div id="throttle-bar"></div></div>
+  </div>
+
+  <script>
+    const EARTH_RADIUS = 6371000;
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.5, 25000000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    container.appendChild(renderer.domElement);
+
+    const sunLight = new THREE.DirectionalLight(0xfffaed, 2.2);
+    scene.add(sunLight);
+    scene.add(new THREE.HemisphereLight(0x38bdf8, 0x0f172a, 0.85));
+
+    const earthCanvas = document.createElement('canvas');
+    earthCanvas.width = 2048; earthCanvas.height = 1024;
+    const eCtx = earthCanvas.getContext('2d');
+    eCtx.fillStyle = '#0c3558';
+    eCtx.fillRect(0, 0, 2048, 1024);
+    eCtx.fillStyle = '#2f5e2c';
+    eCtx.beginPath(); eCtx.ellipse(1350, 340, 380, 190, 0.1, 0, Math.PI * 2); eCtx.fill();
+    eCtx.beginPath(); eCtx.ellipse(1120, 540, 190, 230, 0.2, 0, Math.PI * 2); eCtx.fill();
+    eCtx.beginPath(); eCtx.ellipse(480, 320, 220, 180, -0.2, 0, Math.PI * 2); eCtx.fill();
+    eCtx.beginPath(); eCtx.ellipse(620, 620, 160, 210, 0.3, 0, Math.PI * 2); eCtx.fill();
+    eCtx.beginPath(); eCtx.ellipse(1740, 680, 140, 95, -0.1, 0, Math.PI * 2); eCtx.fill();
+    eCtx.fillStyle = '#eef6ff';
+    eCtx.fillRect(0, 0, 2048, 60);
+    eCtx.fillRect(0, 944, 2048, 80);
+
+    const earthTex = new THREE.CanvasTexture(earthCanvas);
+    const earthMesh = new THREE.Mesh(new THREE.SphereGeometry(EARTH_RADIUS, 128, 96), new THREE.MeshStandardMaterial({ map: earthTex, roughness: 0.6, metalness: 0.1 }));
+    earthMesh.frustumCulled = false;
+    scene.add(earthMesh);
+
+    const atmoMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(EARTH_RADIUS * 1.018, 64, 64),
+      new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.12, side: THREE.BackSide, depthWrite: false })
+    );
+    atmoMesh.frustumCulled = false;
+    scene.add(atmoMesh);
+
+    const starGeo = new THREE.BufferGeometry();
+    const starPos = new Float32Array(2000 * 3);
+    for (let i = 0; i < starPos.length; i += 3) {
+      const th = Math.random() * 2 * Math.PI, ph = Math.acos(2 * Math.random() - 1), r = 18000000;
+      starPos[i] = r * Math.sin(ph) * Math.cos(th);
+      starPos[i+1] = r * Math.sin(ph) * Math.sin(th);
+      starPos[i+2] = r * Math.cos(ph);
+    }
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 2, sizeAttenuation: false }));
+    stars.frustumCulled = false;
+    scene.add(stars);
+
+    const jetGroup = new THREE.Group();
+    const whiteMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.25, metalness: 0.3 });
+    const redMat = new THREE.MeshStandardMaterial({ color: 0xd91e2a, roughness: 0.25, metalness: 0.3 });
+    const canopyMat = new THREE.MeshPhysicalMaterial({ color: 0x1b2a3b, transmission: 0.8, transparent: true, roughness: 0.08 });
+
+    const fuse = new THREE.Mesh(new THREE.ConeGeometry(0.85, 13.5, 16), whiteMat);
+    fuse.rotation.x = -Math.PI / 2;
+    fuse.scale.set(1.1, 0.8, 1);
+    jetGroup.add(fuse);
+
+    const radome = new THREE.Mesh(new THREE.ConeGeometry(0.4, 2.2, 16), redMat);
+    radome.rotation.x = -Math.PI / 2;
+    radome.position.set(0, 0, -6.5);
+    jetGroup.add(radome);
+
+    const intake = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.65, 4.2), whiteMat);
+    intake.position.set(0, -0.55, -1.6);
+    jetGroup.add(intake);
+
+    const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.55, 14, 10), canopyMat);
+    canopy.scale.set(0.85, 0.9, 3.2);
+    canopy.position.set(0, 0.65, -2.4);
+    jetGroup.add(canopy);
+
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(9.8, 0.12, 3.2), whiteMat);
+    wing.position.set(0, 0, 1.4);
+    jetGroup.add(wing);
+
+    for (const s of [-1, 1]) {
+      const tip = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.16, 2.0), redMat);
+      tip.position.set(s * 4.8, 0, 1.8);
+      const hStab = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.09, 1.4), whiteMat);
+      hStab.position.set(s * 1.6, -0.04, 5.8);
+      jetGroup.add(tip, hStab);
+    }
+
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.1, 3.0, 2.5), whiteMat);
+    fin.position.set(0, 1.8, 4.8);
+    const finCap = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.35, 1.6), redMat);
+    finCap.position.set(0, 3.2, 5.2);
+    jetGroup.add(fin, finCap);
+
+    const plumeCanvas = document.createElement('canvas');
+    plumeCanvas.width = 256; plumeCanvas.height = 64;
+    const pCtx = plumeCanvas.getContext('2d');
+    const pGrad = pCtx.createLinearGradient(0, 0, 256, 0);
+    pGrad.addColorStop(0.0, 'rgba(255,252,242,1)');
+    pGrad.addColorStop(0.16, 'rgba(255,214,128,0.95)');
+    pGrad.addColorStop(0.42, 'rgba(249,115,22,0.74)');
+    pGrad.addColorStop(0.75, 'rgba(234,88,12,0.32)');
+    pGrad.addColorStop(1.0, 'rgba(56,189,248,0)');
+    pCtx.fillStyle = pGrad; pCtx.fillRect(0, 0, 256, 64);
+    const plumeTex = new THREE.CanvasTexture(plumeCanvas);
+
+    const coneGeo = new THREE.CylinderGeometry(0.95, 0.36, 1, 20, 4, true);
+    coneGeo.translate(0, -0.5, 0);
+    coneGeo.rotateX(-Math.PI / 2);
+    const uvAttr = coneGeo.getAttribute('uv');
+    for (let i = 0; i < uvAttr.count; i++) uvAttr.setXY(i, 1 - uvAttr.getY(i), uvAttr.getX(i));
+    uvAttr.needsUpdate = true;
+
+    const outerFlameMat = new THREE.MeshBasicMaterial({ map: plumeTex, color: 0xffffff, transparent: true, opacity: 0.78, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    const outerFlame = new THREE.Mesh(coneGeo, outerFlameMat);
+    outerFlame.position.set(0, 0, 7.2);
+    const coreFlameMat = new THREE.MeshBasicMaterial({ map: plumeTex, color: 0xfffbeb, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    const coreFlame = new THREE.Mesh(coneGeo, coreFlameMat);
+    coreFlame.position.set(0, 0, 7.2);
+    jetGroup.add(outerFlame, coreFlame);
+
+    const shockDiamonds = [];
+    const diamondGeo = new THREE.OctahedronGeometry(0.18, 1);
+    diamondGeo.scale(1, 1, 1.85);
+    for (let i = 0; i < 5; i++) {
+      const dm = new THREE.Mesh(diamondGeo, new THREE.MeshBasicMaterial({ color: i <= 1 ? 0xfff7ed : 0xbae6fd, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+      dm.position.set(0, 0, 7.5 + i * 0.65);
+      jetGroup.add(dm);
+      shockDiamonds.push(dm);
+    }
+
+    const gearGroup = new THREE.Group();
+    const strutMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.75, roughness: 0.3 });
+    const tireMat = new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.85 });
+    const nosePivot = new THREE.Group(); nosePivot.position.set(0, -0.35, -3.9);
+    const nStrut = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 1.35, 8), strutMat); nStrut.position.set(0, -0.68, 0);
+    const nWheel = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.16, 12), tireMat); nWheel.rotation.z = Math.PI / 2; nWheel.position.set(0, -1.35, 0);
+    nosePivot.add(nStrut, nWheel); gearGroup.add(nosePivot);
+    const mainPivots = [];
+    for (const s of [-1, 1]) {
+      const mp = new THREE.Group(); mp.position.set(s * 0.5, -0.35, 1.25);
+      const ms = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.07, 1.5, 8), strutMat); ms.position.set(s * 0.45, -0.68, 0); ms.rotation.z = s * 0.55;
+      const mw = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.22, 12), tireMat); mw.rotation.z = Math.PI / 2; mw.position.set(s * 0.85, -1.35, 0);
+      mp.add(ms, mw); gearGroup.add(mp); mainPivots.push({ s, mp });
+    }
+    jetGroup.add(gearGroup);
+    scene.add(jetGroup);
+
+    let posX = 0, posY = EARTH_RADIUS + 4800, posZ = 0;
+    let velX = 0, velY = 0, velZ = -220;
+    let throttle = 0.65, pitchInput = 0, rollInput = 0, yawInput = 0, airbrake = false, gearDown = false, gearProg = 0;
+    let camMode = 0;
+    let camYaw = 0, camPitch = 0.16, camDist = 34;
+    const qJet = new THREE.Quaternion();
+
+    let dragging = false, lx = 0, ly = 0;
+    renderer.domElement.addEventListener('mousedown', (e) => { dragging = true; lx = e.clientX; ly = e.clientY; });
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      camYaw -= (e.clientX - lx) * 0.006;
+      camPitch = Math.max(-1.2, Math.min(1.3, camPitch + (e.clientY - ly) * 0.005));
+      lx = e.clientX; ly = e.clientY;
+    });
+    window.addEventListener('mouseup', () => dragging = false);
+    renderer.domElement.addEventListener('wheel', (e) => { e.preventDefault(); camDist = Math.max(18, Math.min(140, camDist + e.deltaY * 0.04)); }, { passive: false });
+
+    let camTouchId = null, tLx = 0, tLy = 0;
+    renderer.domElement.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) { camTouchId = e.touches[0].identifier; tLx = e.touches[0].clientX; tLy = e.touches[0].clientY; }
+    }, { passive: true });
+    renderer.domElement.addEventListener('touchmove', (e) => {
+      if (camTouchId === null) return;
+      for (const t of e.touches) if (t.identifier === camTouchId) {
+        camYaw -= (t.clientX - tLx) * 0.007;
+        camPitch = Math.max(-1.2, Math.min(1.3, camPitch + (t.clientY - tLy) * 0.006));
+        tLx = t.clientX; tLy = t.clientY;
+      }
+    }, { passive: true });
+    renderer.domElement.addEventListener('touchend', () => camTouchId = null);
+
+    function shapeStick(raw) {
+      const dz = 0.07, abs = Math.abs(raw);
+      if (abs <= dz) return 0;
+      const u = (abs - dz) / (1 - dz);
+      return Math.sign(raw) * (u * 0.28 + u * u * u * 0.72) * 0.75;
+    }
+
+    const joyBase = document.getElementById('joystick-base');
+    const joyKnob = document.getElementById('joystick-knob');
+    let joyPtrId = null;
+    function updateJoy(cx, cy) {
+      const rect = joyBase.getBoundingClientRect(), maxR = Math.max(36, rect.width * 0.42);
+      let dx = cx - (rect.left + rect.width / 2), dy = cy - (rect.top + rect.height / 2);
+      const d = Math.hypot(dx, dy); if (d > maxR) { dx = (dx/d)*maxR; dy = (dy/d)*maxR; }
+      joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+      rollInput = dx / maxR; pitchInput = dy / maxR;
+    }
+    joyBase.addEventListener('pointerdown', (e) => { e.preventDefault(); joyPtrId = e.pointerId; try { joyBase.setPointerCapture(e.pointerId); } catch {} updateJoy(e.clientX, e.clientY); });
+    joyBase.addEventListener('pointermove', (e) => { if (joyPtrId === e.pointerId) { e.preventDefault(); updateJoy(e.clientX, e.clientY); } });
+    function endJoy(e) { if (joyPtrId === e.pointerId) { joyPtrId = null; pitchInput = 0; rollInput = 0; joyKnob.style.transform = ''; } }
+    joyBase.addEventListener('pointerup', endJoy);
+    joyBase.addEventListener('pointercancel', endJoy);
+
+    const throttleCont = document.getElementById('throttle-container');
+    const throttleBar = document.getElementById('throttle-bar');
+    let thrPtrId = null;
+    function handleThrottle(e) {
+      e.preventDefault();
+      const rect = throttleCont.getBoundingClientRect();
+      throttle = 1.0 - Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+      throttleBar.style.height = (throttle * 100) + '%';
+    }
+    throttleCont.addEventListener('pointerdown', (e) => { thrPtrId = e.pointerId; try { throttleCont.setPointerCapture(e.pointerId); } catch {} handleThrottle(e); });
+    throttleCont.addEventListener('pointermove', (e) => { if (thrPtrId === e.pointerId) handleThrottle(e); });
+    throttleCont.addEventListener('pointerup', (e) => { if (thrPtrId === e.pointerId) thrPtrId = null; });
+
+    document.getElementById('btn-camera').addEventListener('pointerdown', () => camMode = (camMode + 1) % 2);
+    document.getElementById('btn-reset-cam').addEventListener('pointerdown', () => { camYaw = 0; camPitch = 0.16; camDist = 34; });
+    document.getElementById('btn-gear').addEventListener('pointerdown', (e) => { gearDown = !gearDown; e.currentTarget.classList.toggle('active', gearDown); });
+    document.getElementById('btn-brake').addEventListener('pointerdown', (e) => { airbrake = !airbrake; e.currentTarget.classList.toggle('active', airbrake); });
+    document.getElementById('btn-fire').addEventListener('pointerdown', () => { throttle = 1.0; throttleBar.style.height = '100%'; });
+    document.getElementById('btn-yaw-l').addEventListener('pointerdown', () => yawInput = -0.85);
+    document.getElementById('btn-yaw-l').addEventListener('pointerup', () => yawInput = 0);
+    document.getElementById('btn-yaw-r').addEventListener('pointerdown', () => yawInput = 0.85);
+    document.getElementById('btn-yaw-r').addEventListener('pointerup', () => yawInput = 0);
+
+    let lastTime = performance.now(), smPitch = 0, smRoll = 0, smYaw = 0, smThr = throttle;
+    function animate() {
+      requestAnimationFrame(animate);
+      const now = performance.now();
+      const dt = Math.min((now - lastTime) / 1000, 0.05);
+      lastTime = now;
+
+      const alpha = 1 - Math.exp(-dt / 0.14);
+      smPitch += (shapeStick(pitchInput) - smPitch) * alpha;
+      smRoll += (shapeStick(rollInput) - smRoll) * alpha;
+      smYaw += (shapeStick(yawInput) - smYaw) * alpha;
+      smThr += (throttle - smThr) * (1 - Math.exp(-dt / 0.3));
+
+      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(qJet);
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(qJet);
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(qJet);
+
+      const currentPos = new THREE.Vector3(posX, posY, posZ);
+      const altitude = Math.max(0, currentPos.length() - EARTH_RADIUS);
+      const earthUp = currentPos.clone().normalize();
+      const sigma = Math.exp(-altitude / 8500);
+
+      const speed = Math.hypot(velX, velY, velZ);
+      const iasKmh = speed * Math.sqrt(sigma) * 3.6;
+      const speedKmh = Math.round(speed * 3.6);
+      const speedKnots = Math.round(iasKmh * 0.54);
+      const isStall = speedKnots < 110 && altitude > 15;
+      document.getElementById('stall-warning').style.display = isStall ? 'block' : 'none';
+
+      const thrustAcc = 18 * (smThr > 0.85 ? 0.85 + (smThr - 0.85) * 2.5 : smThr) * Math.max(0.08, Math.pow(sigma, 0.72));
+      velX += forward.x * thrustAcc * dt; velY += forward.y * thrustAcc * dt; velZ += forward.z * thrustAcc * dt;
+
+      const drag = (0.00
